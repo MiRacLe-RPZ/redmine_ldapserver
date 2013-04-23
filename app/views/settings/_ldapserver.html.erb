@@ -1,0 +1,21 @@
+<h3><%= l(:ldapserver_settings_title) %></h3>
+
+<div class="box tabular">
+    <p>
+        <%= label_tag 'settings[sql_pool_size]', l(:ldapserver_sql_pool_size) %>
+        <%= text_field_tag 'settings[sql_pool_size]', @settings['sql_pool_size'], { :size => 4 } %>
+    </p>
+    <p>
+        <%= label_tag 'settings[pw_cache_size]', l(:ldapserver_pw_cache_size) %>
+        <%= text_field_tag 'settings[pw_cache_size]', @settings['pw_cache_size'], { :size => 4 } %>
+    </p>
+    <p>
+        <%= label_tag 'settings[listen_port]', l(:ldapserver_listen_port) %>
+        <%= text_field_tag 'settings[listen_port]', @settings['listen_port'], { :size => 4 } %>
+    </p>
+    <p>
+        <%= label_tag 'settings[basedn]', l(:ldapserver_basedn) %>
+        <%= text_field_tag 'settings[basedn]', @settings['basedn'], { :size => 50 } %>
+    </p>
+
+</div>

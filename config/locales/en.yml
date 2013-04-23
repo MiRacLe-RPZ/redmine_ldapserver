@@ -1,0 +1,7 @@
+en:
+  ldapserver_settings_title: "LDAPServer settings"
+  ldapserver_sql_pool_size: "Maximum allowed connections"
+  ldapserver_pw_cache_size: "Internal cache size"
+  ldapserver_listen_port: "Listen TCP port"
+  ldapserver_basedn: "BaseDN"
+
