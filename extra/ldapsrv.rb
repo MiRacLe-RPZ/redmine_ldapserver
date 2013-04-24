@@ -1,26 +1,87 @@
 #!/usr/bin/env ruby
 #coding: utf-8
-REDMINE_ROOT = File.expand_path('../../../../', __FILE__)
-ENV['RAILS_ENV'] = ENV['RAILS_ENV'] || 'production'
-require "#{REDMINE_ROOT}/config/environment"
 
+require 'rubygems'
+require 'optparse'
+require 'yaml'
+require 'mysql'
 require 'ldap/server'
 require 'thread'
 require 'resolv-replace'	# ruby threading DNS client
 require 'digest/sha1'
 
+conf = {:daemonize => false,
+        :debug => false,
+        :env => 'production',
+        :root => File.expand_path('../../../../', __FILE__),
+        :daemonize => true,
+        :basedn => "dc=example,dc=org",
+        :pool_size => 2,
+        :pw_cache => 10,
+        :pid => "/tmp/#{ARGV[0]}.pid",
+        :port => 1389
+}
+
+opt_parser = OptionParser.new do |opt|
+  opt.on("-p","--port=LISTENPORT","which tcp-port you want server listen") do |port|
+    conf[:port] = port.to_i
+  end
+  opt.on("-b","--background","run in background") do |background|
+    conf[:daemonize] = true
+  end
+  opt.on("-s","--basedn=BASEDN","BASEDN") do |basedn|
+    conf[:basedn] = basedn
+  end
+  opt.on("-l","--pool=POOLSIZE","Size of sql pool") do |pool|
+    conf[:pool_size] = pool.to_i
+  end
+  opt.on("-c","--cache=CACHESIZE","Size of internal cache") do |cache|
+    conf[:pw_cache] = cache.to_i
+  end
+  opt.on("-d","--debug","DEBUG") do |debug|
+    conf[:debug] = true
+  end
+
+  opt.on("-w","--pid=PIDFILE","Path to pid file") do |pid|
+    conf[:pid] = pid
+  end
+
+  opt.on("-e","--env=ENV","Rails.env") do |env|
+    conf[:env] = env
+  end
+
+  opt.on("-r","--root=ROOTDIR","Rails.root") do |root|
+    conf[:root] = root
+  end
+
+  opt.on_tail("-h", "--help", "Show this message") do
+    puts opt
+    exit
+  end
+
+end
+
+opt_parser.parse!
+
+exit if conf[:root].nil?
+
+dbconf = YAML.load(File.read("#{conf[:root]}/config/database.yml"))
+
+conf[:db] = dbconf[conf[:env]]
+
+
 # To test:
 #    ldapsearch -H ldap://127.0.0.1:1389/ -b "dc=example,dc=com" \
 #       -D "uid=mylogin,dc=example,dc=com" -W "(uid=searchlogin)"
 
-$debug = false
+$debug = conf[:debug]
 
 module RedmineLDAPSrv
 
   class SQLPool
     def initialize(n, conn)
-      @args = [conn[:host], conn[:username], conn[:password], conn[:database]]
-      @charset = conn[:encoding]
+      @args = [conn['host'], conn['username'], conn['password'], conn['database']]
+      @charset = conn['encoding']
       @pool = Queue.new
       n.times { @pool.push nil }
     end
@@ -79,10 +140,10 @@ module RedmineLDAPSrv
 
 
   class SQLOperation < LDAP::Server::Operation
-    def self.configure()
-      @@cache = LRUCache.new(Setting.plugin_redmine_ldapserver['pw_cache_size'].to_i)
-      @@pool = SQLPool.new(Setting.plugin_redmine_ldapserver['sql_pool_size'].to_i, ActiveRecord::Base.connection_config)
-      @@basedn = Setting.plugin_redmine_ldapserver['basedn']
+    def self.configure(conf)
+      @@cache = LRUCache.new(conf[:pw_cache])
+      @@pool = SQLPool.new(conf[:pool_size], conf[:db])
+      @@basedn = conf[:basedn]
     end
 
     def search(basedn, scope, deref, filter)
@@ -133,10 +194,49 @@ module RedmineLDAPSrv
   end
 end
 ##############################################################################
-  RedmineLDAPSrv::SQLOperation.configure()
+def with_lock_file(pid)
+  return false unless obtain_lock(pid)
+  begin
+    yield
+  ensure
+    remove_lock(pid)
+  end
+end
+
+def obtain_lock(pid)
+  File.open(pid, File::CREAT | File::EXCL | File::WRONLY) do |o|
+    o.write(Process.pid)
+  end
+  return true
+rescue
+  return false
+end
+
+def remove_lock(pid)
+  FileUtils.rm(pid, :force => true) if File.exists?(pid)
+
+end
+##############################################################################
+Signal.trap("USR1") do
+  puts "Reloading" if $debug
+end
+
+Signal.trap("TERM") do
+  puts "Stoping." if $debug
+  Process.exit
+end
+
+Signal.trap("INT") do
+  puts "Terminating." if $debug
+  Process.exit
+end
+
+
+
+  RedmineLDAPSrv::SQLOperation.configure(conf)
 
     s = LDAP::Server.new(
-    	:port			=> Setting.plugin_redmine_ldapserver['listen_port'],
+    	:port			=> conf[:port],
     	:nodelay		=> true,
     	:listen			=> 10,
     #	:ssl_key_file		=> "key.pem",
@@ -144,26 +244,27 @@ end
     #	:ssl_on_connect		=> true,
     	:operation_class	=> RedmineLDAPSrv::SQLOperation
     )
-
-    ActiveRecord::Base.connection.disconnect!
-  unless $debug
-
-  if RUBY_VERSION < "1.9"
-    exit if fork
-    Process.setsid
-    exit if fork
-    Dir.chdir "/" 
-    STDIN.reopen "/dev/null"
-    STDOUT.reopen "/dev/null", "a" 
-    STDERR.reopen "/dev/null", "a" 
-  else
-    Process.daemon
+  if conf[:daemonize]
+    if RUBY_VERSION < "1.9"
+      exit if fork
+      Process.setsid
+      exit if fork
+      Dir.chdir "/"
+      STDIN.reopen "/dev/null"
+      STDOUT.reopen "/dev/null", "a"
+      STDERR.reopen "/dev/null", "a"
+    else
+      Process.daemon
+    end
   end
-end
 
+with_lock_file(conf[:pid]) do
   begin
     s.run_tcpserver
     s.join
   rescue Exception => e
-    Rails.logger.fatal "[LDAPSrv] Terminating application, raised unrecoverable error - #{e.message}!!!"
+    remove_lock(conf[:pid])
+    puts "[LDAPSrv] Terminating application, raised unrecoverable error - #{e.message}!!!"
   end
+
+end
