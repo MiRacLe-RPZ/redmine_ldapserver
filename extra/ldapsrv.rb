@@ -18,7 +18,7 @@ conf = {:daemonize => false,
         :basedn => "dc=example,dc=org",
         :pool_size => 2,
         :pw_cache => 10,
-        :pid => "/tmp/#{ARGV[0]}.pid",
+        :pid => "/tmp/#{File.basename(__FILE__)}.pid",
         :port => 1389
 }
 
