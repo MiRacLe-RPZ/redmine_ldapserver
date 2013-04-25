@@ -20,5 +20,6 @@ TODO
 -------------------------
 
 - [ ] automaticaly start/stop with redmine instance
-- [ ] reconfigure daemon on the fly?!
+- [ ] reconfigure server after change settings
+- [ ] clear internal cache after change users
 - [ ] documentation
