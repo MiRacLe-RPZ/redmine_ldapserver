@@ -19,5 +19,6 @@ Installation and usage
 TODO
 -------------------------
 
+- [ ] automaticaly start/stop with redmine instance
 - [ ] reconfigure daemon on the fly?!
 - [ ] documentation
