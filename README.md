@@ -11,7 +11,7 @@ Installation and usage
 * cd ..
 * bundle install
 * restart redmine
-* configure plugins at http://<redmine.url>/settings/plugin/redmine_ldapserver
+* configure plugins at http://&lt;redmine.url&gt;/settings/plugin/redmine_ldapserver
 * rake ldapsrv:start
 * setup ldap authentication in external application (ex. zabbix)
 * profit!
