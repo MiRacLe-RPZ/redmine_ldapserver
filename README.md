@@ -6,7 +6,7 @@ Authentication for external applications (such as zabbix) with redmine credentia
 Installation and usage
 -------------------------
 
-* cd <redmine_root>/plugins
+* cd &lt;redmine_root&gt;/plugins
 * git clone git://github.com/MiRacLe-RPZ/redmine_ldapserver.git
 * cd ..
 * bundle install
