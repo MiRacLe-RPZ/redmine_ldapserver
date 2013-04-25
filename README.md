@@ -3,7 +3,7 @@ redmine_ldapserver
 
 Authentication for external applications (such as zabbix) with redmine credentials
 
-Installation:and usage
+Installation and usage
 -------------------------
 
 * cd <redmine_root>/plugins
@@ -16,7 +16,8 @@ Installation:and usage
 * setup ldap authentication in external application (ex. zabbix)
 * profit!
 
-TODO:
+TODO
+-------------------------
 
 - [ ] reconfigure daemon on the fly?!
 - [ ] documentation
