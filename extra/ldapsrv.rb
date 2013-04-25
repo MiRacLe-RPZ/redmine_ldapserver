@@ -112,6 +112,12 @@ module RedmineLDAPSrv
       @mutex = Mutex.new
     end
 
+    def purge
+      @mutex.synchronize do
+          @cache = []
+      end
+    end
+
     def add(id,data)
       @mutex.synchronize do
         @cache.delete_if { |k,v| k == id }
@@ -144,6 +150,10 @@ module RedmineLDAPSrv
       @@cache = LRUCache.new(conf[:pw_cache])
       @@pool = SQLPool.new(conf[:pool_size], conf[:db])
       @@basedn = conf[:basedn]
+    end
+
+    def self.reload
+	@@cache.purge
     end
 
     def search(basedn, scope, deref, filter)
@@ -219,6 +229,7 @@ end
 ##############################################################################
 Signal.trap("USR1") do
   puts "Reloading" if $debug
+  RedmineLDAPSrv::SQLOperation.reload()
 end
 
 Signal.trap("TERM") do

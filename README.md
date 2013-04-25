@@ -13,8 +13,8 @@ Installation and usage
 * bundle install
 * restart redmine
 * configure plugin (listen port, basedn) at http://&lt;redmine.url&gt;/settings/plugin/redmine_ldapserver
-* rake ldapsrv:start
 * setup ldap authentication in external application (ex. zabbix)
+* use rake ldapsrv:stop, rake ldapsrv:start, rake ldapsrv:restart, rake ldapsrv:reload for control
 * profit!
 
 Current limitations
@@ -29,8 +29,6 @@ Current limitations
 TODO
 -------------------------
 
-- [ ] automaticaly start/stop with redmine instance
 - [ ] reconfigure server after change settings
-- [ ] clear internal cache after change users
 - [ ] database adapters ?!
 - [ ] documentation
