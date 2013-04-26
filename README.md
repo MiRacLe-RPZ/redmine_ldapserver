@@ -29,6 +29,5 @@ Current limitations
 TODO
 -------------------------
 
-- [ ] reconfigure server after change settings
 - [ ] database adapters ?!
 - [ ] documentation
