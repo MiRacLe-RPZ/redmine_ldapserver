@@ -7,7 +7,7 @@ require 'yaml'
 require 'mysql'
 require 'ldap/server'
 require 'thread'
-require 'resolv-replace'	# ruby threading DNS client
+require 'resolv-replace' # ruby threading DNS client
 require 'digest/sha1'
 
 conf = {:daemonize => false,
@@ -23,36 +23,41 @@ conf = {:daemonize => false,
 }
 
 opt_parser = OptionParser.new do |opt|
-  opt.on("-p","--port=LISTENPORT","which tcp-port you want server listen") do |port|
+  opt.on("-p", "--port=LISTENPORT", "which tcp-port you want server listen") do |port|
     conf[:port] = port.to_i
   end
-  opt.on("-b","--background","run in background") do |background|
+  opt.on("-b", "--background", "run in background") do |background|
     conf[:daemonize] = true
   end
-  opt.on("-s","--basedn=BASEDN","BASEDN") do |basedn|
+  opt.on("-s", "--basedn=BASEDN", "BASEDN") do |basedn|
     conf[:basedn] = basedn
   end
-  opt.on("-l","--pool=POOLSIZE","Size of sql pool") do |pool|
+  opt.on("-l", "--pool=POOLSIZE", "Size of sql pool") do |pool|
     conf[:pool_size] = pool.to_i
   end
-  opt.on("-c","--cache=CACHESIZE","Size of internal cache") do |cache|
+  opt.on("-c", "--cache=CACHESIZE", "Size of internal cache") do |cache|
     conf[:pw_cache] = cache.to_i
   end
-  opt.on("-d","--debug","DEBUG") do |debug|
+  opt.on("-d", "--debug", "DEBUG") do |debug|
     conf[:debug] = true
   end
 
-  opt.on("-w","--pid=PIDFILE","Path to pid file") do |pid|
+  opt.on("-w", "--pid=PIDFILE", "Path to pid file") do |pid|
     conf[:pid] = pid
   end
 
-  opt.on("-e","--env=ENV","Rails.env") do |env|
+  opt.on("-e", "--env=ENV", "Rails.env") do |env|
     conf[:env] = env
   end
 
-  opt.on("-r","--root=ROOTDIR","Rails.root") do |root|
+  opt.on("-r", "--root=ROOTDIR", "Rails.root") do |root|
     conf[:root] = root
   end
+
+  opt.on("-f", "--foreground", "Run in foreground") do |op|
+    conf[:daemonize] = false
+  end
+
 
   opt.on_tail("-h", "--help", "Show this message") do
     puts opt
@@ -88,7 +93,7 @@ module RedmineLDAPSrv
 
     def borrow
       conn = @pool.pop
-      if conn.nil?  then
+      if conn.nil? then
         conn = Mysql.init
         conn.options(Mysql::SET_CHARSET_NAME, @charset)
         conn.real_connect(*@args)
@@ -108,20 +113,20 @@ module RedmineLDAPSrv
   class LRUCache
     def initialize(size)
       @size = size
-      @cache = []   # [[key,val],[key,val],...]
+      @cache = [] # [[key,val],[key,val],...]
       @mutex = Mutex.new
     end
 
     def purge
       @mutex.synchronize do
-          @cache = []
+        @cache = []
       end
     end
 
-    def add(id,data)
+    def add(id, data)
       @mutex.synchronize do
-        @cache.delete_if { |k,v| k == id }
-        @cache.unshift [id,data]
+        @cache.delete_if { |k, v| k == id }
+        @cache.unshift [id, data]
         @cache.pop while @cache.size > @size
       end
     end
@@ -153,7 +158,7 @@ module RedmineLDAPSrv
     end
 
     def self.reload
-	@@cache.purge
+      @@cache.purge
     end
 
     def search(basedn, scope, deref, filter)
@@ -165,23 +170,23 @@ module RedmineLDAPSrv
         q = "select login, firstname,lastname,mail,language,status,admin,mail_notification from users where login='#{sql.quote(uid)}'"
         puts "SQL Query #{sql.object_id}: #{q}" if $debug
         res = sql.query(q)
-        res.each do |login,firstname,lastname,mail,language,status,admin,mail_notification|
+        res.each do |login, firstname, lastname, mail, language, status, admin, mail_notification|
           send_SearchResultEntry("uid=#{login},#{@@basedn}", {
-            "login" => login,
-            "mail" => mail,
-            "firstname" => firstname,
-            "lastname" => lastname,
-            "language" => language,
-            "status" => status == 1 ? 'active' : 'inactive',
-            "mail_notification" => mail_notification
+              "login" => login,
+              "mail" => mail,
+              "firstname" => firstname,
+              "lastname" => lastname,
+              "language" => language,
+              "status" => status == 1 ? 'active' : 'inactive',
+              "mail_notification" => mail_notification
           })
         end
       end
     end
 
     def simple_bind(version, dn, password)
-      return if dn.nil?   # accept anonymous
-      puts "version: #{version}, dn: #{dn}, password: ********"  if $debug
+      return if dn.nil? # accept anonymous
+      puts "version: #{version}, dn: #{dn}, password: ********" if $debug
       raise LDAP::ResultError::UnwillingToPerform unless dn =~/\Auid=([\w|-]+),#{@@basedn}\z/
       login = $1
       data = @@cache.find(login)
@@ -191,10 +196,10 @@ module RedmineLDAPSrv
           puts "SQL Query #{sql.object_id}: #{q}" if $debug
           res = sql.query(q)
           if res.num_rows == 1
-      	    res.each do |salt,hashed_password|
-  	          data = [salt,hashed_password]
+            res.each do |salt, hashed_password|
+              data = [salt, hashed_password]
               @@cache.add(login, data)
-  	        end
+            end
           end
         end
       end
@@ -226,6 +231,7 @@ def remove_lock(pid)
   FileUtils.rm(pid, :force => true) if File.exists?(pid)
 
 end
+
 ##############################################################################
 Signal.trap("USR1") do
   puts "Reloading" if $debug
@@ -243,31 +249,30 @@ Signal.trap("INT") do
 end
 
 
+RedmineLDAPSrv::SQLOperation.configure(conf)
 
-  RedmineLDAPSrv::SQLOperation.configure(conf)
-
-    s = LDAP::Server.new(
-    	:port			=> conf[:port],
-    	:nodelay		=> true,
-    	:listen			=> 10,
+s = LDAP::Server.new(
+    :port => conf[:port],
+    :nodelay => true,
+    :listen => 10,
     #	:ssl_key_file		=> "key.pem",
     #	:ssl_cert_file		=> "cert.pem",
     #	:ssl_on_connect		=> true,
-    	:operation_class	=> RedmineLDAPSrv::SQLOperation
-    )
-  if conf[:daemonize]
-    if RUBY_VERSION < "1.9"
-      exit if fork
-      Process.setsid
-      exit if fork
-      Dir.chdir "/"
-      STDIN.reopen "/dev/null"
-      STDOUT.reopen "/dev/null", "a"
-      STDERR.reopen "/dev/null", "a"
-    else
-      Process.daemon
-    end
+    :operation_class => RedmineLDAPSrv::SQLOperation
+)
+if conf[:daemonize]
+  if RUBY_VERSION < "1.9"
+    exit if fork
+    Process.setsid
+    exit if fork
+    Dir.chdir "/"
+    STDIN.reopen "/dev/null"
+    STDOUT.reopen "/dev/null", "a"
+    STDERR.reopen "/dev/null", "a"
+  else
+    Process.daemon
   end
+end
 
 with_lock_file(conf[:pid]) do
   begin
