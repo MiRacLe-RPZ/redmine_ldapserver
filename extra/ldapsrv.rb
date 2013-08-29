@@ -4,11 +4,12 @@
 require 'rubygems'
 require 'optparse'
 require 'yaml'
-require 'mysql'
+require 'mysql2'
 require 'ldap/server'
 require 'thread'
 require 'resolv-replace' # ruby threading DNS client
 require 'digest/sha1'
+require 'fileutils'
 
 conf = {:daemonize => false,
         :debug => false,
@@ -79,14 +80,14 @@ conf[:db] = dbconf[conf[:env]]
 #    ldapsearch -H ldap://127.0.0.1:1389/ -b "dc=example,dc=com" \
 #       -D "uid=mylogin,dc=example,dc=com" -W "(uid=searchlogin)"
 
+
 $debug = conf[:debug]
 
 module RedmineLDAPSrv
 
   class SQLPool
     def initialize(n, conn)
-      @args = [conn['host'], conn['username'], conn['password'], conn['database']]
-      @charset = conn['encoding']
+      @args = conn
       @pool = Queue.new
       n.times { @pool.push nil }
     end
@@ -94,12 +95,13 @@ module RedmineLDAPSrv
     def borrow
       conn = @pool.pop
       if conn.nil? then
-        conn = Mysql.init
-        conn.options(Mysql::SET_CHARSET_NAME, @charset)
-        conn.real_connect(*@args)
-        q ="SET NAMES `#{@charset}`"
-        puts q if $debug
-        conn.query(q)
+        conn = Mysql2::Client.new(
+            :host => @args['host'],
+            :username => @args['username'],
+            :password => @args['password'],
+            :encoding => @args['encoding'],
+            :database => @args['database']
+        )
       end
       yield conn
     rescue Exception
@@ -155,33 +157,74 @@ module RedmineLDAPSrv
       @@cache = LRUCache.new(conf[:pw_cache])
       @@pool = SQLPool.new(conf[:pool_size], conf[:db])
       @@basedn = conf[:basedn]
+      @@ldapdb = nil
     end
 
     def self.reload
       @@cache.purge
+      @@ldapdb = nil
+    end
+
+    def load_ldapdb
+      @@ldapdb = []
+      prev_user = nil
+      @@pool.borrow do |sql|
+        q = "select g.lastname as groupname,
+                    u.login as member,
+                    u.mail as mail,
+                    u.firstname as firstname,
+                    u.lastname as lastname,
+                    u.language as language
+              from users as g inner join groups_users as gu on g.id = gu.group_id inner join users u on u.id = user_id where u.status = 1 and u.type = 'User' and u.auth_source_id is null
+              order by u.login
+              "
+        puts "SQL Query #{sql.object_id}: #{q}" if $debug
+        res = sql.query(q)
+        res.each do |row|
+          if prev_user != row['member']
+            @@ldapdb.unshift(["uid=#{row['member']},#{@@basedn}", {'uid' => [row['member']], 'mail' => [row['mail']], 'language' => [row['language']], 'firstname' => [row['firstname']], 'lastname' => [row['lastname']]}])
+            prev_user = row['member']
+          end
+          @@ldapdb.unshift(["cn=#{row['groupname']},#{@@basedn}", {'cn' => [row['groupname']], 'uniqueMember' => ["uid=#{row['member']},#{@@basedn}"]}])
+        end
+
+      end
+      p @@ldapdb if $debug
     end
 
     def search(basedn, scope, deref, filter)
       puts "basedn: #{basedn}, scope: #{scope}, deref: #{deref}, filter: #{filter}" if $debug
-      raise LDAP::ResultError::UnwillingToPerform, "Bad base DN" unless basedn == @@basedn
-      raise LDAP::ResultError::UnwillingToPerform, "Bad filter" unless filter[0..1] == [:eq, "uid"]
-      uid = filter[3]
-      @@pool.borrow do |sql|
-        q = "select login, firstname,lastname,mail,language,status,admin,mail_notification from users where login='#{sql.quote(uid)}'"
-        puts "SQL Query #{sql.object_id}: #{q}" if $debug
-        res = sql.query(q)
-        res.each do |login, firstname, lastname, mail, language, status, admin, mail_notification|
-          send_SearchResultEntry("uid=#{login},#{@@basedn}", {
-              "login" => login,
-              "mail" => mail,
-              "firstname" => firstname,
-              "lastname" => lastname,
-              "language" => language,
-              "status" => status == 1 ? 'active' : 'inactive',
-              "mail_notification" => mail_notification
-          })
-        end
+      load_ldapdb if @@ldapdb.nil?
+      basedn.downcase!
+      ok = false
+      case scope
+        when LDAP::Server::BaseObject
+          puts "search for single object by DN" if $debug
+          @@ldapdb.each do |row|
+            dn = row[0]
+            av = row[1]
+            if !ok and dn == basedn
+              ok = true
+              puts "filter: #{filter.inspect}, av: #{av.inspect}" if $debug
+              send_SearchResultEntry(basedn, av)
+            end
+          end
+        when LDAP::Server::WholeSubtree
+          puts "search subtree" if $debug
+          @@ldapdb.each do |row|
+            dn = row[0]
+            av = row[1]
+            next unless dn.index(basedn, -basedn.length) # under basedn?
+            next unless LDAP::Server::Filter.run(filter, av) # attribute filter?
+            puts "filter: #{filter.inspect}, av: #{av.inspect}" if $debug
+            ok = true
+            send_SearchResultEntry(dn, av)
+          end
+        else
+          raise LDAP::ResultError::UnwillingToPerform, "OneLevel not implemented"
       end
+      puts "nosuchobject" if $debug and !ok
+      raise LDAP::ResultError::NoSuchObject unless ok
     end
 
     def simple_bind(version, dn, password)
@@ -190,21 +233,22 @@ module RedmineLDAPSrv
       raise LDAP::ResultError::UnwillingToPerform unless dn =~/\Auid=([\w|-]+),#{@@basedn}\z/
       login = $1
       data = @@cache.find(login)
+      calculated_hash = Digest::SHA1.hexdigest(password)
       unless data
         @@pool.borrow do |sql|
-          q = "select salt,hashed_password from users where login='#{login}' and sha1(concat(salt,sha1('#{password}'))) = hashed_password and status = 1 and auth_source_id is null"
+          pwd = sql.escape(calculated_hash)
+          q = "select salt,hashed_password from users where login='#{login}' and sha1(concat(salt,'#{pwd}')) = hashed_password and status = 1 and auth_source_id is null"
           puts "SQL Query #{sql.object_id}: #{q}" if $debug
           res = sql.query(q)
-          if res.num_rows == 1
-            res.each do |salt, hashed_password|
-              data = [salt, hashed_password]
+          if res.count == 1
+            res.each do |row|
+              data = row
               @@cache.add(login, data)
             end
           end
         end
       end
-      calculated_hash = Digest::SHA1.hexdigest(password)
-      raise LDAP::ResultError::InvalidCredentials unless !data.nil? and data[1] != "" and data[1] == Digest::SHA1.hexdigest("#{data[0]}#{calculated_hash}")
+      raise LDAP::ResultError::InvalidCredentials unless !data.nil? and data['salt'] != "" and data['hashed_password'] == Digest::SHA1.hexdigest("#{data['salt']}#{calculated_hash}")
     end
   end
 end
@@ -229,7 +273,6 @@ end
 
 def remove_lock(pid)
   FileUtils.rm(pid, :force => true) if File.exists?(pid)
-
 end
 
 ##############################################################################
@@ -240,42 +283,29 @@ end
 
 Signal.trap("TERM") do
   puts "Stoping." if $debug
+  remove_lock(conf[:pid])
   Process.exit
 end
 
 Signal.trap("INT") do
   puts "Terminating." if $debug
+  remove_lock(conf[:pid])
   Process.exit
 end
 
 
-RedmineLDAPSrv::SQLOperation.configure(conf)
+Process.daemon if conf[:daemonize]
 
-s = LDAP::Server.new(
-    :port => conf[:port],
-    :nodelay => true,
-    :listen => 10,
-    #	:ssl_key_file		=> "key.pem",
-    #	:ssl_cert_file		=> "cert.pem",
-    #	:ssl_on_connect		=> true,
-    :operation_class => RedmineLDAPSrv::SQLOperation
-)
-if conf[:daemonize]
-  if RUBY_VERSION < "1.9"
-    exit if fork
-    Process.setsid
-    exit if fork
-    Dir.chdir "/"
-    STDIN.reopen "/dev/null"
-    STDOUT.reopen "/dev/null", "a"
-    STDERR.reopen "/dev/null", "a"
-  else
-    Process.daemon
-  end
-end
 
 with_lock_file(conf[:pid]) do
   begin
+    RedmineLDAPSrv::SQLOperation.configure(conf)
+    s = LDAP::Server.new(
+        :port => conf[:port],
+        :nodelay => true,
+        :listen => 10,
+        :operation_class => RedmineLDAPSrv::SQLOperation
+    )
     s.run_tcpserver
     s.join
   rescue Exception => e

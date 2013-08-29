@@ -1,7 +1,7 @@
 redmine_ldapserver
 ==================
 
-Authentication for external applications (such as zabbix) with redmine credentials
+Authentication for external applications (such as zabbix or jenkins) with redmine credentials
 
 
 Installation and usage
@@ -17,11 +17,11 @@ Installation and usage
 * use rake ldapsrv:stop, rake ldapsrv:start, rake ldapsrv:restart, rake ldapsrv:reload for control
 * profit!
 
-Current limitations
+Current limitations (requirements)
 -------------------------
 
-* only mysql
-* tested only on ree (ruby1.8.7)
+* only mysql2
+* ruby >= 1.9
 * tested only on linux
 * tested only on redmine-current (2.3.0.devel)
 
