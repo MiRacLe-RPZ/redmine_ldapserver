@@ -195,7 +195,7 @@ module RedmineLDAPSrv
     def search(basedn, scope, deref, filter)
       puts "basedn: #{basedn}, scope: #{scope}, deref: #{deref}, filter: #{filter}" if $debug
       load_ldapdb if @@ldapdb.nil?
-      basedn.downcase!
+#      basedn.downcase!
       ok = false
       case scope
         when LDAP::Server::BaseObject
