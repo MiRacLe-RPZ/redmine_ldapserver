@@ -4,7 +4,7 @@
 require 'rubygems'
 require 'optparse'
 require 'yaml'
-require 'mysql2'
+require 'active_record'
 require 'ldap/server'
 require 'thread'
 require 'resolv-replace' # ruby threading DNS client
@@ -85,33 +85,6 @@ $debug = conf[:debug]
 
 module RedmineLDAPSrv
 
-  class SQLPool
-    def initialize(n, conn)
-      @args = conn
-      @pool = Queue.new
-      n.times { @pool.push nil }
-    end
-
-    def borrow
-      conn = @pool.pop
-      if conn.nil? then
-        conn = Mysql2::Client.new(
-            :host => @args['host'],
-            :username => @args['username'],
-            :password => @args['password'],
-            :encoding => @args['encoding'],
-            :database => @args['database']
-        )
-      end
-      yield conn
-    rescue Exception
-      conn = nil
-      raise
-    ensure
-      @pool.push conn
-    end
-  end
-
   class LRUCache
     def initialize(size)
       @size = size
@@ -154,8 +127,8 @@ module RedmineLDAPSrv
 
   class SQLOperation < LDAP::Server::Operation
     def self.configure(conf)
+      ActiveRecord::Base.establish_connection(conf[:db])
       @@cache = LRUCache.new(conf[:pw_cache])
-      @@pool = SQLPool.new(conf[:pool_size], conf[:db])
       @@basedn = conf[:basedn]
       @@ldapdb = nil
     end
@@ -168,27 +141,25 @@ module RedmineLDAPSrv
     def load_ldapdb
       @@ldapdb = []
       prev_user = nil
-      @@pool.borrow do |sql|
-        q = "select g.lastname as groupname,
-                    u.login as member,
-                    u.mail as mail,
-                    u.firstname as firstname,
-                    u.lastname as lastname,
-                    u.language as language
-              from users as g inner join groups_users as gu on g.id = gu.group_id inner join users u on u.id = user_id where u.status = 1 and u.type = 'User' and u.auth_source_id is null
-              order by u.login
-              "
-        puts "SQL Query #{sql.object_id}: #{q}" if $debug
-        res = sql.query(q)
-        res.each do |row|
-          if prev_user != row['member']
-            @@ldapdb.unshift(["uid=#{row['member']},#{@@basedn}", {'uid' => [row['member']], 'mail' => [row['mail']], 'language' => [row['language']], 'firstname' => [row['firstname']], 'lastname' => [row['lastname']]}])
-            prev_user = row['member']
-          end
-          @@ldapdb.unshift(["cn=#{row['groupname']},#{@@basedn}", {'cn' => [row['groupname']], 'uniqueMember' => ["uid=#{row['member']},#{@@basedn}"]}])
+      sql = "select g.lastname as groupname,
+                  u.login as member,
+                  u.mail as mail,
+                  u.firstname as firstname,
+                  u.lastname as lastname,
+                  u.language as language
+            from users as g inner join groups_users as gu on g.id = gu.group_id inner join users u on u.id = user_id where u.status = 1 and u.type = 'User' and u.auth_source_id is null
+            order by u.login
+            "
+      puts "SQL Query: #{sql}" if $debug
+      rows = ActiveRecord::Base.connection.select_all(sql)
+      rows.each do |row|
+        if prev_user != row['member']
+          @@ldapdb.unshift(["uid=#{row['member']},#{@@basedn}", {'uid' => [row['member']], 'mail' => [row['mail']], 'language' => [row['language']], 'firstname' => [row['firstname']], 'lastname' => [row['lastname']]}])
+          prev_user = row['member']
         end
-
+        @@ldapdb.unshift(["cn=#{row['groupname']},#{@@basedn}", {'cn' => [row['groupname']], 'uniqueMember' => ["uid=#{row['member']},#{@@basedn}"]}])
       end
+
       p @@ldapdb if $debug
     end
 
@@ -235,16 +206,15 @@ module RedmineLDAPSrv
       data = @@cache.find(login)
       calculated_hash = Digest::SHA1.hexdigest(password)
       unless data
-        @@pool.borrow do |sql|
-          pwd = sql.escape(calculated_hash)
-          q = "select salt,hashed_password from users where login='#{login}' and sha1(concat(salt,'#{pwd}')) = hashed_password and status = 1 and auth_source_id is null"
-          puts "SQL Query #{sql.object_id}: #{q}" if $debug
-          res = sql.query(q)
-          if res.count == 1
-            res.each do |row|
-              data = row
-              @@cache.add(login, data)
-            end
+        user = ActiveRecord::Base.connection.quote(login)
+        pwd = ActiveRecord::Base.connection.quote(calculated_hash)
+        sql = "select salt,hashed_password from users where login=#{user} and sha1(concat(salt,#{pwd})) = hashed_password and status = 1 and auth_source_id is null"
+        puts "SQL Query: #{sql}" if $debug
+        rows = ActiveRecord::Base.connection.select_all(sql)
+        if rows.count == 1
+          rows.each do |row|
+            data = row
+            @@cache.add(login, data)
           end
         end
       end
