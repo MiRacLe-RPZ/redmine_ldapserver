@@ -27,7 +27,7 @@ Redmine::Plugin.register :redmine_ldapserver do
   author 'MiRacLe.RPZ'
   author_url 'http://miracle.rpz.name'
   description 'Simple LDAPServer for auth'
-  version '0.3.0'
+  version '0.3.1'
 
   settings :default => { 'sql_pool_size' => '10', 'listen_port' => 1389, 'pw_cache_size' => '100', 'basedn' => 'dc=example,dc=com' }, :partial => 'settings/ldapserver'
 
