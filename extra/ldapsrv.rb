@@ -74,6 +74,7 @@ exit if conf[:root].nil?
 dbconf = YAML.load(File.read("#{conf[:root]}/config/database.yml"))
 
 conf[:db] = dbconf[conf[:env]]
+conf[:db]['pool'] = conf[:pool_size]
 
 
 # To test:
