@@ -1,21 +1,23 @@
 desc 'Control ldapsrv'
 
-
 namespace :ldapsrv do
   plugin_root = File.expand_path('../../../', __FILE__)
   require "#{plugin_root}/lib/ldap_server_control.rb"
   srv = LdapServerControl.new
-  task :start => :environment do
-    puts srv.start() ? "OK" : "FAIL"
+  task :start do
+    Rake::Task['environment'].invoke
+    cmd = srv.start_cmd()
+    exec cmd
   end
-  task :stop => :environment do
-    puts "Stoping LDAPsrv"
+  task :stop do
+    Rake::Task['environment'].invoke
     srv.stop()
   end
-  task :reload => :environment do
+  task :reload do
+    Rake::Task['environment'].invoke
     srv.reload()
   end
-  task :restart => :environment do
+  task :restart do
     Rake::Task['ldapsrv:stop'].invoke
     Rake::Task['ldapsrv:start'].invoke
   end

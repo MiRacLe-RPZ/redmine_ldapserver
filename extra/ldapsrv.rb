@@ -234,6 +234,9 @@ def with_lock_file(pid)
 end
 
 def obtain_lock(pid)
+  if File.exist?(pid)
+    remove_lock(pid) unless Process.getpgid(File.read(pid).to_i)
+  end
   File.open(pid, File::CREAT | File::EXCL | File::WRONLY) do |o|
     o.write(Process.pid)
   end
